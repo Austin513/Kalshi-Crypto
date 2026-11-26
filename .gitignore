@@ -1,0 +1,11 @@
+# local environment
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.pytest_cache/
+.DS_Store
+
+# raw downloads and generated databases (rebuild with `python -m btc_tails.download_binance` etc.)
+data/*
+!data/README.md
