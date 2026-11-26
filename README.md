@@ -89,7 +89,7 @@ All numbers below are copied from the executed notebook. The section it comes fr
 | C. logistic (interaction spec, chosen on validation) | 0.07182 | 0.23266 | −0.0156 |
 | D. PyTorch conditional Gaussian | 0.07190 | 0.23351 | −0.0147 [−0.0200, −0.0098] |
 
-The empirical model's gain is concentrated at ±25 bps. At ±50 bps it is slightly worse than the normal and the CI crosses zero. Logistic beat empirical by −0.0073 [−0.0095, −0.0054] in log loss. No model produced a monotonicity violation.
+The PyTorch settings were revised once after a first run's test scores had been seen. The draft hit its epoch cap; the disclosure is in §5 and the test log loss moved from 0.2339 to 0.2335. The empirical model's gain is concentrated at ±25 bps. At ±50 bps it is slightly worse than the normal and the CI crosses zero. Logistic beat empirical by −0.0073 [−0.0095, −0.0054] in log loss. No model produced a monotonicity violation.
 
 **Kalshi KXBTC15M, October 2026 [§6].** 2,936 of 2,976 windows had a market. The 40 missing windows all fall in Kalshi's documented Thursday 3–5 AM ET maintenance. All 2,936 had a two-sided quote at open+1 min. The Binance proxy reproduces the actual outcome in 96.5% of markets. On the same 2,936 markets, log loss was: market mid 0.6572, PyTorch (horizon-rescaled) 0.6626, normal 0.6671, empirical 0.6690. Every model was worse than the market mid, and each model − market CI excludes zero. **No P&L was computed** (see below).
 
