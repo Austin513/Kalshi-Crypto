@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("BTC_TAILS_DATA", ROOT / "data"))
 RAW_BINANCE = DATA_DIR / "raw" / "binance"
 RAW_KALSHI = DATA_DIR / "raw" / "kalshi"
+RAW_KALSHI_FULL = DATA_DIR / "raw" / "kalshi_full"
 DB_PATH = DATA_DIR / "btc.sqlite"
 SQL_DIR = Path(__file__).resolve().parent / "sql"
 

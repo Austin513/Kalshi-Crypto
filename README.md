@@ -1,105 +1,154 @@
-# Do Bitcoin Return Tails Improve Short-Horizon Event Pricing?
+# Can you price 15-minute Bitcoin bets better than a bell curve?
 
-Does using the actual distribution of 15-minute BTC log returns give better out-of-sample probabilities that BTC finishes above a level $K$ than a fitted normal? Does conditioning on recent volatility help more? And how do these probabilities compare with Kalshi's 15-minute BTC market prices on the same windows?
+## Why I did this
 
-**Main deliverable:** [`notebooks/btc_tails.ipynb`](notebooks/btc_tails.ipynb), committed with its executed outputs.
+Kalshi runs a market every 15 minutes that asks one question: **will Bitcoin be higher at the end of these 15 minutes than at the start?** You can buy "yes" or "no", and the price tells you what the crowd thinks the odds are.
 
-## Data
+To put your own price on a bet like that, you need a decent sense of how far BTC tends to move in 15 minutes. The textbook answer is to assume price moves follow a bell curve. But anyone who's watched Bitcoin knows it doesn't behave that way. It sits still for a while, then suddenly jumps.
 
-| | |
-|---|---|
-| Spot venue / pair | Binance spot, `BTCUSDT`, 1-minute klines |
-| Source | Monthly bulk archives at `data.binance.vision` ([docs](https://github.com/binance/binance-public-data)), SHA-256 checked against Binance's `.CHECKSUM` files |
-| Window | 2026-05-01 00:00 to 2026-10-31 23:59 UTC (six complete months; November was not yet archived on 2026-11-26) |
-| Timestamps | `open_time` = candle **open**, in microseconds (spot files from 2025 on). Stored as UTC epoch seconds in `ts_open`. A candle closes at `ts_open + 60s`. |
-| Prediction market | Kalshi series `KXBTC15M` via the public REST API (no key). Test month October 2026: metadata plus 1-minute YES bid/ask/trade candles for each market |
+So I wanted to find out:
 
-Raw files and the SQLite database are cached under `data/` (ignored by Git). Set `BTC_TAILS_DATA` to use another directory.
+1. **How wrong is the bell curve, really?** And in which direction?
+2. **Can I do better** just by using what BTC has actually done in the past, or by noticing when the market's been jumpy lately?
+3. **Do any of my guesses beat the people trading on Kalshi?**
 
-## Reproduce
+The whole analysis, with charts, is in [`notebooks/btc_tails.ipynb`](notebooks/btc_tails.ipynb). It's saved with all its results, so you can read it right on GitHub without running anything.
 
-Local (Python 3.14, project venv):
+## What I did
+
+**Got the data.** I downloaded every 1-minute Bitcoin price from Binance for six months, May through October 2026. That's 264,960 minutes. I checked for gaps and duplicates and there weren't any.
+
+**Chopped it into 15-minute pieces.** Each piece starts on the quarter hour (:00, :15, :30, :45), just like Kalshi's markets. For each one I measured how much BTC went up or down. That left me with 17,647 pieces to work with.
+
+**Put the real moves next to a bell curve** to see where they disagree.
+
+**Tried four ways of guessing** "what are the odds BTC ends above some price?"
+
+- **A. Bell curve.** The textbook approach.
+- **B. Just count.** Look back at history and ask: how often did BTC move at least this far? No assumptions about shape.
+- **C. Count, but pay attention to recent jumpiness.** Same idea as B, but it also looks at how wild the last 1 to 4 hours have been.
+- **D. Bell curve, but pay attention to recent jumpiness.** A small neural network that makes the bell curve wider when the market's been wild and narrower when it's been calm.
+
+**Kept the test honest.** All four learned from May through August. I used September to make a few setup choices. October was locked away until the end and only used once, as the final exam.
+
+**Went up against the market.** I pulled October's Kalshi prices for the same 15-minute windows and checked who was closer to what actually happened: me or the traders.
+
+## What I found
+
+### The bell curve gets the shape wrong
+
+A typical 15-minute move is around 0.2%. Next to a bell curve, real Bitcoin is:
+
+- **Calmer most of the time.** Moves bigger than 0.25% (either way) happened about 2,300 times. A bell curve says it should've been about 3,700.
+- **Wilder when it does move.** Moves bigger than 0.5% happened 466 times, more than double the 210 a bell curve predicts. Moves bigger than 0.75% happened 154 times. The bell curve says that should've happened about 3 times.
+
+So the bell curve thinks medium-sized moves are more common than they are, and it seriously underestimates the big ones.
+
+### Bitcoin doesn't lean up or down in any reliable way
+
+There's a tiny tilt toward bigger up-moves than down-moves overall, but it isn't consistent. It was strongest in August and actually flipped the other way in October. Take out the 5 most extreme 15-minute windows and it mostly disappears.
+
+### My guesses got better, but not by a lot
+
+Here's how each method did on October, the month none of them had seen. The score measures how close the predicted odds came to what actually happened. Lower is better.
+
+| method | score | compared with the bell curve |
+|---|---|---|
+| A. Bell curve | 0.2482 | (starting point) |
+| B. Just count | 0.2399 | about 3% better |
+| C. Count + recent jumpiness | 0.2327 | about 6% better |
+| D. Bell curve + recent jumpiness | 0.2335 | about 6% better |
+
+Using real history helped. Paying attention to recent jumpiness helped about as much again. To check whether these improvements could just be luck, I reran the comparison many times on reshuffled sets of October's days. They held up. They're real, but small.
+
+### The market was better than all of them
+
+On 2,936 October Kalshi markets, the market's own price one minute in predicted the result better than any of my four methods. Method D came closest, but it still lost, and not by a margin you could blame on chance. Basically, Kalshi traders already know what my models know, and then some.
+
+### I tried four ways to make money, and none of them worked
+
+Being less accurate on average doesn't automatically mean you can't profit. You only need to find the occasional bet where the price is wrong by more than the fee. So I downloaded Kalshi's prices for every minute of every window in September and October and tried four strategies:
+
+- **S1. Bet when my best model disagrees with the price at the start of the window.**
+- **S2. Live fair value.** Every minute, work out the "right" price from where Bitcoin is on Binance compared with the starting price, how much time is left, and how jumpy the last hour was. Bet when Kalshi's price lags behind.
+- **S3. Look for price ranges the market gets wrong.** For example, do contracts priced at 90¢ actually win more than 90% of the time?
+- **S4. A regression that combines all of the above** with the market price itself, and bets when it disagrees with the market.
+
+To keep it fair, each strategy's rules (how big a disagreement before betting, which minutes, which price ranges) were picked using **September only**, then tested once on **October**. Each bet is 1 contract at the listed price, after Kalshi's fee.
+
+| strategy | made money in September? | bets in October | win rate | October profit per bet |
+|---|---|---|---|---|
+| S1. Model vs. price at the start | yes (+$11.75) | 303 | 39% | −4.6¢ |
+| S2. Live fair value | yes (+$11.64) | 2,095 | 55% | −2.5¢ |
+| S3. Mispriced price ranges | yes (+$30.60) | 719 | 85% | −1.2¢ |
+| S4. Regression on top of the market | no (−$9.26), so I wouldn't trade it | 432 | 50% | −4.2¢ |
+
+Every one of them lost money in October. The three that looked good in September didn't hold up. September's "winners" were mostly luck that happened to fit that month. S2 was the clearest failure. It lost money even before fees, and its losses after fees were too consistent to blame on bad luck. When I tracked accuracy minute by minute, the market's price was more accurate than my live fair value at every single minute of the window, in both months.
+
+Two caveats work in my favor here, which makes the losses more convincing, not less. I assumed every bet got filled at the listed price, and I couldn't confirm October's exact fees. A real trader would likely do a bit worse.
+
+## Conclusion
+
+Bitcoin's 15-minute moves really don't look like a bell curve. Most of the time BTC is quieter than the bell curve expects, and when it moves, it moves much harder. If you price bets on BTC using a bell curve, you'll be off, mostly on the big moves.
+
+Fixing that is straightforward and it does help. Counting what actually happened in the past beats the bell curve. Noticing whether the market has been calm or wild over the last few hours helps about as much again. Together that's roughly a 6% improvement. It's real, but modest.
+
+The catch is that none of this beats the market. Kalshi's prices were more accurate than anything I built, at every minute of the window. I tried four different ways to turn my models into a profit, and all four lost money in October. My takeaway is that this market already prices Bitcoin's jumpiness well, and the public data doesn't hold an easy edge. Finding one would probably take things this data doesn't have: the full order book (how many contracts sit at each price), confirmed fees, and faster price data than one snapshot a minute.
+
+## Everything in the analysis
+
+**Plots**
+- Histogram of 15-minute moves with a bell curve drawn on top
+- Q–Q plot (real moves vs. where a bell curve says they should fall)
+- How often moves of each size happened vs. what a bell curve predicts (up and down sides)
+- Gap between the bell curve and "just count" at each strike, with luck ranges
+- Calibration plots for all four models (when a model says 30%, does it happen 30% of the time?)
+- Calibration of Kalshi's price vs. my models
+- Accuracy at each minute of the window: Kalshi's price vs. my live fair value
+- Running October profit for each of the four strategies
+
+**Models and regressions**
+- A. Bell curve (normal distribution fit to past moves)
+- B. "Just count" (share of past moves bigger than the target)
+- C. Logistic regression using the target, recent volatility (last 1 and 4 hours) and the last two 15-minute moves. Three versions were compared and the best on September was kept.
+- D. Small PyTorch neural network that sets the bell curve's center and width from recent volatility
+- Live fair value model: past moves, scaled by the last hour's volatility, for each minute left in the window
+- S4 logistic regression combining the market price, live fair value, the last minute's move, the spread and time left
+
+**Analysis**
+- Data checks: missing minutes, duplicates, misaligned timestamps
+- Summary stats (typical move, skew, fat tails), overall and by month, plus the biggest moves
+- What-if check with the 5 biggest moves removed
+- Train on May–Aug, tune on September, test on October
+- Scoring with Brier score and log loss, by strike and overall
+- Luck checks that resample whole days of the test month
+- Check that a higher target never gets a higher probability
+- How often Binance's price gives the same result as Kalshi's official settlement
+- Four trading strategies with rules picked on September, tested on October, including a "filled one minute late" stress test
+
+**Outputs**
+- Score tables for every model, overall and by strike
+- Model vs. model and model vs. market comparison tables with luck ranges
+- Kalshi coverage table (which markets existed and had prices)
+- Strategy results table: bets, win rate, profit per bet before and after fees, luck range
+- A summary of the key numbers at the end of the notebook
+
+## Running it yourself
+
+You'll need Python 3.14.
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt          # on Linux: install torch from the CPU index first (see Dockerfile)
-.venv/bin/python -m pytest -q tests                # fixture checks, no data needed
-.venv/bin/python -m btc_tails.download_binance     # 6 zip files, ~12 MB total, checksum-verified
-.venv/bin/python -m btc_tails.build_db             # data/btc.sqlite
-.venv/bin/python -m btc_tails.kalshi 2026-10-01 2026-11-01   # 2,976 markets; rate-limited; took about 1.5 hours here
+.venv/bin/pip install -r requirements.txt
+
+.venv/bin/python -m pytest -q tests                          # quick sanity checks, no data needed
+.venv/bin/python -m btc_tails.download_binance               # BTC prices, about 12 MB
+.venv/bin/python -m btc_tails.build_db                       # builds data/btc.sqlite
+.venv/bin/python -m btc_tails.kalshi 2026-10-01 2026-11-01   # Kalshi data (slow, about 1.5 hours, because Kalshi limits request speed)
+.venv/bin/python -m btc_tails.kalshi 2026-09-01 2026-11-01 --full   # every minute of every window, for the strategy tests (about 15 minutes)
 .venv/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/btc_tails.ipynb
 ```
 
-Docker (CPU only; `data/` mounted so downloads are cached):
+Anything already downloaded gets skipped, so running it again is quick. Everything is saved in `data/`, which Git ignores.
 
-```bash
-docker build -t btc-tails .
-docker run --rm -v "$PWD/data:/work/data" -v "$PWD/notebooks:/work/notebooks" btc-tails
-```
-
-All downloads skip files that are already cached, so re-runs are fast.
-
-## Repository layout
-
-```
-notebooks/btc_tails.ipynb   the research notebook (one thread: data -> distribution -> forecasts -> Kalshi)
-btc_tails/
-  download_binance.py       bulk archive download + checksum
-  build_db.py               load CSVs into SQLite (staging table -> keyed table)
-  sql/schema.sql            tables; PRIMARY KEY (venue, pair, ts_open)
-  sql/normalize.sql         collapse exact duplicates, drop conflicting ones (never average)
-  sql/audit.sql             duplicate keys, misaligned rows, timestamp gaps
-  sql/windows.sql           15-minute windows: start/end closes and a 16-candle completeness check
-  features.py               trailing features, strike grid, purged chronological split
-  models.py                 normal, empirical, logistic (sklearn Pipeline), PyTorch conditional Gaussian
-  evaluate.py               Brier, log loss, reliability bins, monotonicity, day-block bootstrap
-  kalshi.py                 public Kalshi API downloader (live + historical endpoints)
-tests/test_checks.py        hand-built fixture: known return, missing minute, strict threshold, purged split boundary
-```
-
-What each tool does here: **SQLite/SQL** stores the candles and does the audit and window extraction. **pandas** handles features and tables. **NumPy/SciPy** compute moments and the normal model. **Matplotlib** draws the figures. **scikit-learn** fits the logistic model. **PyTorch** fits the conditional Gaussian. **pytest** runs the fixture checks. **Docker** gives a clean rerun. **Git** keeps the history.
-
-## Implementation plan (as carried out)
-
-1. Verify sources: Binance archive docs, coverage, schema and timestamp units; Kalshi `KXBTC15M` contract terms, historical endpoints and fee information.
-2. Download six months of 1m candles. Load them into SQLite through a staging table and audit duplicates, alignment and gaps in SQL.
-3. Build non-overlapping 15-minute windows aligned to UTC (decision time = window start). Drop any window that is missing a candle.
-4. Describe the distribution: moments, histogram, Q–Q, tail exceedances, monthly subperiods and extreme windows.
-5. Run the forecasting experiment: strikes at −50/−25/0/+25/+50 log-bps. Train May–Aug, validate Sep, test Oct. Fit normal and empirical baselines first, then logistic and PyTorch.
-6. Score on the same test rows: Brier, log loss, per strike, reliability, monotonicity, and day-block bootstrap intervals.
-7. Kalshi: align at open+1 min, compare the market mid and the models against actual outcomes, and record what data is missing for a P&L test.
-8. Verify: fixture tests, a fresh-kernel execution, and a check that README numbers match the notebook.
-
-## Results (from the executed notebook)
-
-All numbers below are copied from the executed notebook. The section it comes from is in brackets.
-
-**Data audit [§1].** 264,960 one-minute candles kept out of 264,960 read (= 184 days × 1,440). 0 duplicate keys, 0 gaps. 17,664 calendar windows; 1 dropped for a missing candle (the first window's start candle is on 2026-04-30) and 16 for feature warm-up, leaving 17,647.
-
-**Distribution [§2].** 15-minute log returns: sd 19.88 bps, skewness 0.160, excess kurtosis 16.95. Monthly skew ranges from −0.41 (Oct) to +1.54 (Aug); without the 5 largest |r| windows, skew is 0.086 (labeled sensitivity check only). Moves beyond ±25 bps happen *less* often than the fitted normal implies (1,150 up vs 1,841 expected). Moves beyond ±50 bps happen *more* often (241 vs 105).
-
-**Splits [§3].** Train 2026-05-01 04:15 to 2026-08-31 23:45 UTC (11,791 windows); validation September (2,880); test October (2,976 windows × 5 strikes = 14,880 rows). No rows needed purging.
-
-**Held-out spot experiment [§4–5]**, test month, same 14,880 rows for every model:
-
-| model | Brier | log loss | log loss vs normal (95% day-block CI) |
-|---|---|---|---|
-| A. normal | 0.07407 | 0.24823 | – |
-| B. empirical | 0.07255 | 0.23992 | −0.0083 [−0.0103, −0.0063] |
-| C. logistic (interaction spec, chosen on validation) | 0.07182 | 0.23266 | −0.0156 |
-| D. PyTorch conditional Gaussian | 0.07190 | 0.23351 | −0.0147 [−0.0200, −0.0098] |
-
-The PyTorch settings were revised once after a first run's test scores had been seen. The draft hit its epoch cap; the disclosure is in §5 and the test log loss moved from 0.2339 to 0.2335. The empirical model's gain is concentrated at ±25 bps. At ±50 bps it is slightly worse than the normal and the CI crosses zero. Logistic beat empirical by −0.0073 [−0.0095, −0.0054] in log loss. No model produced a monotonicity violation.
-
-**Kalshi KXBTC15M, October 2026 [§6].** 2,936 of 2,976 windows had a market. The 40 missing windows all fall in Kalshi's documented Thursday 3–5 AM ET maintenance. All 2,936 had a two-sided quote at open+1 min. The Binance proxy reproduces the actual outcome in 96.5% of markets. On the same 2,936 markets, log loss was: market mid 0.6572, PyTorch (horizon-rescaled) 0.6626, normal 0.6671, empirical 0.6690. Every model was worse than the market mid, and each model − market CI excludes zero. **No P&L was computed** (see below).
-
-## What was not verified
-
-- **Docker:** not installed on the build machine (`docker: command not found`), so the image was neither built nor smoke-tested. The Dockerfile has not been run.
-- **Kalshi fee schedule:** `https://kalshi.com/docs/kalshi-fee-schedule.pdf` returned HTTP 429 to automated requests. The API reports the current `fee_type=quadratic`, `fee_multiplier=1` and an empty fee-change history, which does not prove what applied in October 2026.
-- **Executable prices:** Kalshi's historical 1-minute candles give the best YES bid and ask but no size, so fills at the ask cannot be shown. Combined with the unverified fees, the repo makes no profitability claim and does not test market making.
-- **Linux torch wheel:** the pinned versions were installed and run on macOS arm64 only.
-
-## How this was built
-
-The code, notebook text and this README were drafted with an AI coding assistant (Claude Code), working from my written specification. All numbers come from code that runs against the downloaded data. The interpretation sections in the notebook are left blank for me to write.
+**Opening the notebook in VS Code or Jupyter:** pick the Python from this project's `.venv` folder (`.venv/bin/python`) as the kernel. If you pick a different one, the notebook won't be able to find its packages.

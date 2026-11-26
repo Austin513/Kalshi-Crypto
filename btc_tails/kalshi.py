@@ -12,16 +12,22 @@ Each market is cached as data/raw/kalshi/{ticker}.json with its metadata and the
 covering [open, open + CANDLE_MINUTES]. Re-running only fetches missing tickers.
 
     python -m btc_tails.kalshi 2026-10-01 2026-11-01
+
+`--full` caches the candlesticks for the whole 15-minute window instead, in data/raw/kalshi_full/
+(used by the strategy section). It reuses metadata already in data/raw/kalshi/ and fetches in parallel:
+
+    python -m btc_tails.kalshi 2026-09-01 2026-11-01 --full
 """
 import json
 import sys
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from . import RAW_KALSHI
+from . import RAW_KALSHI, RAW_KALSHI_FULL
 
 API = "https://api.elections.kalshi.com/trade-api/v2"
 SERIES = "KXBTC15M"
@@ -39,7 +45,7 @@ def ticker_for_window(t_open):
     return f"{SERIES}-{close_et.strftime('%y%b%d%H%M').upper()}-{close_et.strftime('%M')}"
 
 
-def _get(path, tries=6):
+def _get(path, tries=10):
     for i in range(tries):
         try:
             req = urllib.request.Request(API + path, headers={"User-Agent": "student-research-script"})
@@ -57,7 +63,7 @@ def _get(path, tries=6):
     raise RuntimeError(f"giving up on {path}")
 
 
-def fetch_market(ticker):
+def fetch_market(ticker, minutes=CANDLE_MINUTES):
     for prefix, candle_path in (("/markets/", f"/series/{SERIES}/markets/{ticker}/candlesticks"),
                                 ("/historical/markets/", f"/historical/markets/{ticker}/candlesticks")):
         meta = _get(prefix + ticker)
@@ -65,7 +71,7 @@ def fetch_market(ticker):
             continue
         m = meta["market"]
         t0 = int(datetime.fromisoformat(m["open_time"].replace("Z", "+00:00")).timestamp())
-        candles = _get(f"{candle_path}?start_ts={t0}&end_ts={t0 + 60 * CANDLE_MINUTES}&period_interval=1")
+        candles = _get(f"{candle_path}?start_ts={t0}&end_ts={t0 + 60 * minutes}&period_interval=1")
         return {"source": prefix.strip("/"), "market": m,
                 "candlesticks": (candles or {}).get("candlesticks", []),
                 "retrieved_utc": datetime.now(timezone.utc).isoformat(timespec="seconds")}
@@ -107,5 +113,40 @@ def download(start, end, out=RAW_KALSHI, pause=0.12):
     print(f"done: {n_new} new files in {out}")
 
 
+def _fetch_full(t, short_dir, out):
+    """Metadata (reused from the short cache when present) plus all 15 one-minute candles."""
+    tk = ticker_for_window(t)
+    path = out / f"{tk}.json"
+    if path.exists():
+        return 0
+    short = short_dir / f"{tk}.json"
+    rec = json.loads(short.read_text()) if short.exists() else None
+    if rec is None or rec["market"] is None:
+        rec = fetch_market(tk, minutes=15)
+    else:
+        m = rec["market"]
+        base = f"/series/{SERIES}/markets/" if rec["source"] == "markets" else "/historical/markets/"
+        t0 = int(datetime.fromisoformat(m["open_time"].replace("Z", "+00:00")).timestamp())
+        candles = _get(f"{base}{tk}/candlesticks?start_ts={t0}&end_ts={t0 + 900}&period_interval=1")
+        rec = {"source": rec["source"], "market": m, "candlesticks": (candles or {}).get("candlesticks", []),
+               "retrieved_utc": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    rec["window_open_utc"] = t
+    path.write_text(json.dumps(rec))
+    return 1
+
+
+def download_full(start, end, out=RAW_KALSHI_FULL, short_dir=RAW_KALSHI, workers=3):
+    out.mkdir(parents=True, exist_ok=True)
+    t0 = int(datetime.fromisoformat(start).replace(tzinfo=timezone.utc).timestamp())
+    t1 = int(datetime.fromisoformat(end).replace(tzinfo=timezone.utc).timestamp())
+    with ThreadPoolExecutor(workers) as ex:
+        n_new = sum(ex.map(lambda t: _fetch_full(t, short_dir, out), range(t0, t1, 900)))
+    print(f"done: {n_new} new files in {out}")
+
+
 if __name__ == "__main__":
-    download(sys.argv[1], sys.argv[2])
+    if "--full" in sys.argv:
+        a = [x for x in sys.argv[1:] if x != "--full"]
+        download_full(a[0], a[1])
+    else:
+        download(sys.argv[1], sys.argv[2])
